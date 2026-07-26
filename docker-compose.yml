@@ -63,7 +63,9 @@ services:
 
   # ── Kafka Topic Initializer (one-shot) ─────────────────────────────────────
   # Runs once after Kafka is healthy, creates the topic, then exits 0.
-  # Uses a plain single-line string to avoid YAML block-scalar/backslash issues.
+  # The command MUST be a YAML list so the entire script stays as one argument
+  # to bash -c. A plain string would be word-split by Docker Compose, causing
+  # bash -c to only execute the first word and ignore the rest.
   kafka-init:
     image: confluentinc/cp-kafka:7.6.0
     container_name: flowstate-kafka-init
@@ -72,9 +74,11 @@ services:
         condition: service_healthy
     networks:
       - flowstate-net
-    entrypoint: ["bash", "-c"]
-    command: "kafka-topics --bootstrap-server kafka:29092 --create --if-not-exists --topic transaction-events --partitions 3 --replication-factor 1 --config retention.ms=86400000 && echo 'Topic transaction-events created OK'"
-    restart: on-failure
+    entrypoint: /bin/bash
+    command:
+      - "-c"
+      - "kafka-topics --bootstrap-server kafka:29092 --create --if-not-exists --topic transaction-events --partitions 3 --replication-factor 1 --config retention.ms=86400000 && echo 'Topic transaction-events created OK'"
+    restart: "no"
 
   # ── Redis (Velocity Cache) ─────────────────────────────────────────────────
   redis:
