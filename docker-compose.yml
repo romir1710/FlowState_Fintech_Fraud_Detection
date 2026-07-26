@@ -1,0 +1,148 @@
+version: '3.8'
+
+# ─────────────────────────────────────────────────────────────────────────────
+# FlowState — Real-Time Fraud Detection Pipeline
+# Services: Zookeeper, Kafka, kafka-init, Redis, PostgreSQL
+# ─────────────────────────────────────────────────────────────────────────────
+
+services:
+  # ── Zookeeper ──────────────────────────────────────────────────────────────
+  zookeeper:
+    image: confluentinc/cp-zookeeper:7.6.0
+    container_name: flowstate-zookeeper
+    hostname: zookeeper
+    restart: unless-stopped
+    ports:
+      - "2181:2181"
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+      ZOOKEEPER_TICK_TIME: 2000
+      ZOOKEEPER_SYNC_LIMIT: 2
+    networks:
+      - flowstate-net
+    healthcheck:
+      test: ["CMD", "bash", "-c", "echo ruok | nc localhost 2181 | grep imok"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  # ── Kafka Broker ───────────────────────────────────────────────────────────
+  kafka:
+    image: confluentinc/cp-kafka:7.6.0
+    container_name: flowstate-kafka
+    hostname: kafka
+    restart: unless-stopped
+    depends_on:
+      zookeeper:
+        condition: service_healthy
+    ports:
+      # External clients (host machine) use localhost:9092
+      - "9092:9092"
+    environment:
+      KAFKA_BROKER_ID: 1
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+      # PLAINTEXT      → accessible from the host via localhost:9092
+      # PLAINTEXT_INTERNAL → accessible from within Docker network via kafka:29092
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://localhost:9092,PLAINTEXT_INTERNAL://kafka:29092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_INTERNAL:PLAINTEXT
+      KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:9092,PLAINTEXT_INTERNAL://0.0.0.0:29092
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT_INTERNAL
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "false"
+      KAFKA_LOG_RETENTION_HOURS: 24
+      KAFKA_LOG_SEGMENT_BYTES: 1073741824
+    networks:
+      - flowstate-net
+    healthcheck:
+      test: ["CMD", "kafka-broker-api-versions", "--bootstrap-server", "localhost:9092"]
+      interval: 15s
+      timeout: 10s
+      retries: 10
+      start_period: 30s
+
+  # ── Kafka Topic Initializer (one-shot) ─────────────────────────────────────
+  kafka-init:
+    image: confluentinc/cp-kafka:7.6.0
+    container_name: flowstate-kafka-init
+    depends_on:
+      kafka:
+        condition: service_healthy
+    networks:
+      - flowstate-net
+    entrypoint: ["/bin/bash", "-c"]
+    command: |
+      "
+      echo 'Waiting for Kafka to be fully ready...' &&
+      sleep 5 &&
+      kafka-topics --bootstrap-server kafka:29092 \
+        --create \
+        --if-not-exists \
+        --topic transaction-events \
+        --partitions 3 \
+        --replication-factor 1 \
+        --config retention.ms=86400000 &&
+      echo '✅ Topic [transaction-events] created successfully (3 partitions)' &&
+      kafka-topics --bootstrap-server kafka:29092 --describe --topic transaction-events
+      "
+    restart: on-failure
+
+  # ── Redis (Velocity Cache) ─────────────────────────────────────────────────
+  redis:
+    image: redis:7-alpine
+    container_name: flowstate-redis
+    hostname: redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    command: >
+      redis-server
+      --save 60 1
+      --loglevel warning
+      --maxmemory 256mb
+      --maxmemory-policy allkeys-lru
+    networks:
+      - flowstate-net
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+      start_period: 5s
+
+  # ── PostgreSQL (Flagged Transactions Store) ─────────────────────────────────
+  postgres:
+    image: postgres:16-alpine
+    container_name: flowstate-postgres
+    hostname: postgres
+    restart: unless-stopped
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_DB: flowstate
+      POSTGRES_USER: flowstate_user
+      POSTGRES_PASSWORD: flowstate_pass
+    volumes:
+      - ./postgres/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+      - postgres-data:/var/lib/postgresql/data
+    networks:
+      - flowstate-net
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U flowstate_user -d flowstate"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+# ─────────────────────────────────────────────────────────────────────────────
+volumes:
+  postgres-data:
+    driver: local
+
+networks:
+  flowstate-net:
+    driver: bridge
+    name: flowstate-net
