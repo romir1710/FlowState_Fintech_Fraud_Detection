@@ -10,10 +10,14 @@
  *
  * Configuration (environment variables):
  *   KAFKA_BROKERS              Comma-separated broker list (default: "localhost:9092")
+ *   KAFKA_SASL_USERNAME        Upstash Kafka SASL username (omit for local dev)
+ *   KAFKA_SASL_PASSWORD        Upstash Kafka SASL password (omit for local dev)
  *   KAFKA_TOPIC                Topic to consume from (default: "transaction-events")
  *   KAFKA_GROUP_ID             Consumer group ID (default: "flowstate-fraud-detector")
- *   REDIS_HOST                 Redis hostname (default: "localhost")
- *   REDIS_PORT                 Redis port (default: 6379)
+ *   REDIS_URL                  Full Redis URL — e.g. rediss://... (Upstash). Overrides HOST/PORT.
+ *   REDIS_HOST                 Redis hostname (default: "localhost", ignored when REDIS_URL set)
+ *   REDIS_PORT                 Redis port (default: 6379, ignored when REDIS_URL set)
+ *   DATABASE_URL               Full PostgreSQL URL (Render). Overrides individual PG_* vars.
  *   PG_HOST                    PostgreSQL hostname (default: "localhost")
  *   PG_PORT                    PostgreSQL port (default: 5432)
  *   PG_DATABASE                Database name (default: "flowstate")
@@ -21,7 +25,7 @@
  *   PG_PASSWORD                Database password (default: "flowstate_pass")
  *   FRAUD_THRESHOLD            Risk score cutoff for fraud (default: 75)
  *   VELOCITY_WINDOW_SECONDS    Fixed window duration in seconds (default: 60)
- *   WS_PORT                    WebSocket server port (default: 8080)
+ *   PORT / WS_PORT             WebSocket server port (PORT takes priority — injected by Render)
  */
 
 import { Kafka, logLevel } from 'kafkajs';
@@ -32,12 +36,18 @@ import { initWebSocketServer, broadcast, closeWebSocketServer } from './websocke
 
 // ─── Config ──────────────────────────────────────────────────────────────────
 const KAFKA_BROKERS = (process.env.KAFKA_BROKERS ?? 'localhost:9092').split(',');
+const KAFKA_SASL_USERNAME = process.env.KAFKA_SASL_USERNAME;
+const KAFKA_SASL_PASSWORD = process.env.KAFKA_SASL_PASSWORD;
 const KAFKA_TOPIC = process.env.KAFKA_TOPIC ?? 'transaction-events';
 const KAFKA_GROUP_ID = process.env.KAFKA_GROUP_ID ?? 'flowstate-fraud-detector';
 
+// REDIS_URL (e.g. rediss://... from Upstash) takes priority over HOST/PORT
+const REDIS_URL = process.env.REDIS_URL;
 const REDIS_HOST = process.env.REDIS_HOST ?? 'localhost';
 const REDIS_PORT = parseInt(process.env.REDIS_PORT ?? '6379', 10);
 
+// DATABASE_URL (Render connection string) takes priority over individual PG_* vars
+const DATABASE_URL = process.env.DATABASE_URL;
 const PG_HOST = process.env.PG_HOST ?? 'localhost';
 const PG_PORT = parseInt(process.env.PG_PORT ?? '5432', 10);
 const PG_DATABASE = process.env.PG_DATABASE ?? 'flowstate';
@@ -48,22 +58,16 @@ const FRAUD_THRESHOLD = parseInt(process.env.FRAUD_THRESHOLD ?? '75', 10);
 const VELOCITY_WINDOW_SECONDS = parseInt(process.env.VELOCITY_WINDOW_SECONDS ?? '60', 10);
 
 // ─── Clients ──────────────────────────────────────────────────────────────────
-const redis = new Redis({
-  host: REDIS_HOST,
-  port: REDIS_PORT,
-  lazyConnect: true,
-});
+// Redis: use full URL (Upstash) when available, otherwise HOST:PORT (local dev)
+const redis = REDIS_URL
+  ? new Redis(REDIS_URL, { lazyConnect: true })
+  : new Redis({ host: REDIS_HOST, port: REDIS_PORT, lazyConnect: true });
 
-const pgPool = new Pool({
-  host: PG_HOST,
-  port: PG_PORT,
-  database: PG_DATABASE,
-  user: PG_USER,
-  password: PG_PASSWORD,
-  max: 10,               // max pool connections
-  idleTimeoutMillis: 30_000,
-  connectionTimeoutMillis: 5_000,
-});
+// PostgreSQL: use DATABASE_URL (Render) when available, otherwise individual vars (local dev)
+// ssl.rejectUnauthorized=false is required for Render's self-signed cert in the URL
+const pgPool = DATABASE_URL
+  ? new Pool({ connectionString: DATABASE_URL, ssl: { rejectUnauthorized: false }, max: 10, idleTimeoutMillis: 30_000, connectionTimeoutMillis: 5_000 })
+  : new Pool({ host: PG_HOST, port: PG_PORT, database: PG_DATABASE, user: PG_USER, password: PG_PASSWORD, max: 10, idleTimeoutMillis: 30_000, connectionTimeoutMillis: 5_000 });
 
 // ─── Velocity: Fixed Window Counter ──────────────────────────────────────────
 /**
@@ -157,10 +161,22 @@ async function main(): Promise<void> {
   initWebSocketServer();
 
   // Set up Kafka consumer
+  // SASL/TLS is added when KAFKA_SASL_USERNAME is present (Upstash production)
+  // and omitted for plain local-dev connections — same codebase, both work.
   const kafka = new Kafka({
     clientId: 'flowstate-consumer',
     brokers: KAFKA_BROKERS,
     logLevel: logLevel.WARN,
+    ...(KAFKA_SASL_USERNAME && KAFKA_SASL_PASSWORD
+      ? {
+          sasl: {
+            mechanism: 'scram-sha-256' as const,
+            username: KAFKA_SASL_USERNAME,
+            password: KAFKA_SASL_PASSWORD,
+          },
+          ssl: true,
+        }
+      : {}),
   });
 
   const consumer = kafka.consumer({

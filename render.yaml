@@ -1,0 +1,78 @@
+# render.yaml — FlowState Infrastructure-as-Code for Render
+#
+# Defines two web services (consumer, producer) and a PostgreSQL database.
+# Render reads this file from the repo root and auto-configures everything.
+# Both services auto-deploy on every push to main.
+#
+# Before deploying, set these env vars manually in Render dashboard:
+#   KAFKA_BROKERS, KAFKA_SASL_USERNAME, KAFKA_SASL_PASSWORD, REDIS_URL
+
+services:
+  # ── Consumer + WebSocket Server ─────────────────────────────────────────────
+  # Core fraud-detection engine. Reads from Kafka, scores transactions,
+  # persists fraud to Postgres, and broadcasts all results over WebSocket.
+  - type: web
+    name: flowstate-consumer
+    runtime: node
+    rootDir: backend
+    buildCommand: npm install && npm run build
+    startCommand: node dist/consumer.js
+    healthCheckPath: /health
+    plan: free
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: KAFKA_BROKERS
+        sync: false   # Set manually in Render dashboard (from Upstash)
+      - key: KAFKA_SASL_USERNAME
+        sync: false   # Set manually in Render dashboard (from Upstash)
+      - key: KAFKA_SASL_PASSWORD
+        sync: false   # Set manually in Render dashboard (from Upstash)
+      - key: KAFKA_TOPIC
+        value: transaction-events
+      - key: KAFKA_GROUP_ID
+        value: flowstate-fraud-detector
+      - key: REDIS_URL
+        sync: false   # Set manually in Render dashboard (from Upstash)
+      - key: DATABASE_URL
+        fromDatabase:
+          name: flowstate-postgres
+          property: connectionString
+      - key: FRAUD_THRESHOLD
+        value: "75"
+      - key: VELOCITY_WINDOW_SECONDS
+        value: "60"
+
+  # ── Producer (Mock Transaction Stream) ──────────────────────────────────────
+  # Generates simulated transactions at 1 tx/10s in production to stay
+  # within Upstash Kafka free tier limits (10,000 messages/day).
+  - type: web
+    name: flowstate-producer
+    runtime: node
+    rootDir: backend
+    buildCommand: npm install && npm run build
+    startCommand: node dist/producer.js
+    healthCheckPath: /health
+    plan: free
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: KAFKA_BROKERS
+        sync: false   # Set manually in Render dashboard (from Upstash)
+      - key: KAFKA_SASL_USERNAME
+        sync: false   # Set manually in Render dashboard (from Upstash)
+      - key: KAFKA_SASL_PASSWORD
+        sync: false   # Set manually in Render dashboard (from Upstash)
+      - key: KAFKA_TOPIC
+        value: transaction-events
+      - key: PRODUCE_INTERVAL_MS
+        value: "10000"  # 1 tx/10s = 8,640/day — within Upstash free limit
+
+databases:
+  # ── PostgreSQL (Flagged Transactions Store) ──────────────────────────────────
+  # Free tier: 1GB storage, 90-day trial. DATABASE_URL is auto-injected
+  # into the consumer service via fromDatabase reference above.
+  - name: flowstate-postgres
+    plan: free
+    databaseName: flowstate
+    user: flowstate_user
