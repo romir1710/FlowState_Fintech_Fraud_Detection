@@ -59,9 +59,11 @@ const VELOCITY_WINDOW_SECONDS = parseInt(process.env.VELOCITY_WINDOW_SECONDS ?? 
 
 // ─── Clients ──────────────────────────────────────────────────────────────────
 // Redis: use full URL (Upstash) when available, otherwise HOST:PORT (local dev)
+// NOTE: ioredis does not support (url, options) — passing a URL auto-connects;
+//       do NOT pass a second options arg or the URL is silently ignored.
 const redis = REDIS_URL
-  ? new Redis(REDIS_URL, { lazyConnect: true })
-  : new Redis({ host: REDIS_HOST, port: REDIS_PORT, lazyConnect: true });
+  ? new Redis(REDIS_URL)                                           // auto-connects via TLS
+  : new Redis({ host: REDIS_HOST, port: REDIS_PORT, lazyConnect: true }); // explicit connect()
 
 // PostgreSQL: use DATABASE_URL (Render) when available, otherwise individual vars (local dev)
 // ssl.rejectUnauthorized=false is required for Render's self-signed cert in the URL
@@ -148,9 +150,15 @@ async function saveFlaggedTransaction(tx: ProcessedTransaction): Promise<void> {
 
 // ─── Main ────────────────────────────────────────────────────────────────────
 async function main(): Promise<void> {
-  // Connect external services
-  await redis.connect();
-  console.log(`[Consumer] ✅ Redis connected (${REDIS_HOST}:${REDIS_PORT})`);
+  // Connect Redis:
+  //   URL-based (Upstash): ioredis auto-connects on construction — just ping to verify.
+  //   HOST:PORT (local dev): lazyConnect=true, so we must call connect() explicitly.
+  if (!REDIS_URL) {
+    await redis.connect();
+  }
+  await redis.ping(); // blocks until connection is ready in both cases
+  const redisInfo = REDIS_URL ? 'Upstash (TLS)' : `${REDIS_HOST}:${REDIS_PORT}`;
+  console.log(`[Consumer] ✅ Redis connected (${redisInfo})`);
 
   // Test PostgreSQL connection
   const pgClient = await pgPool.connect();
