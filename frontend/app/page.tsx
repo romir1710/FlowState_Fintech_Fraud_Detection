@@ -117,6 +117,13 @@ export default function HomePage() {
     mountedRef.current = true;
     connect();
 
+    // ─── WAKE UP PING ────────────────────────────────────────────────────────
+    // Silently ping the producer's health endpoint so Render spins it up from
+    // sleep when a recruiter visits the page. The 'no-cors' mode ensures the
+    // browser doesn't throw CORS errors, and the catch ignores any network fails.
+    fetch('https://flowstate-producer.onrender.com/health', { mode: 'no-cors' }).catch(() => {});
+    // ─────────────────────────────────────────────────────────────────────────
+
     return () => {
       mountedRef.current = false;
       wsRef.current?.close();
