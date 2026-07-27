@@ -77,7 +77,7 @@ async function main(): Promise<void> {
             username: KAFKA_SASL_USERNAME,
             password: KAFKA_SASL_PASSWORD,
           },
-          ssl: true,
+          ssl: { rejectUnauthorized: false },
         }
       : {}),
   });
