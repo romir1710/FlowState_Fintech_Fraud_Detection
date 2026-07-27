@@ -29,7 +29,7 @@
  */
 
 import { Kafka, logLevel } from 'kafkajs';
-import Redis from 'ioredis';
+import Redis, { RedisOptions } from 'ioredis';
 import { Pool } from 'pg';
 import { Transaction, ProcessedTransaction } from './types';
 import { initWebSocketServer, broadcast, closeWebSocketServer } from './websocket-server';
@@ -57,13 +57,41 @@ const PG_PASSWORD = process.env.PG_PASSWORD ?? 'flowstate_pass';
 const FRAUD_THRESHOLD = parseInt(process.env.FRAUD_THRESHOLD ?? '75', 10);
 const VELOCITY_WINDOW_SECONDS = parseInt(process.env.VELOCITY_WINDOW_SECONDS ?? '60', 10);
 
-// ─── Clients ──────────────────────────────────────────────────────────────────
-// Redis: use full URL (Upstash) when available, otherwise HOST:PORT (local dev)
-// NOTE: ioredis does not support (url, options) — passing a URL auto-connects;
-//       do NOT pass a second options arg or the URL is silently ignored.
-const redis = REDIS_URL
-  ? new Redis(REDIS_URL)                                           // auto-connects via TLS
-  : new Redis({ host: REDIS_HOST, port: REDIS_PORT, lazyConnect: true }); // explicit connect()
+// ─── Redis Connection Factory ────────────────────────────────────────────────
+/**
+ * Parses REDIS_URL manually with Node's URL API instead of relying on ioredis's
+ * URL-string constructor overload, which silently falls back to defaults when
+ * combined with other arguments or when the URL scheme is unrecognised.
+ *
+ * Always returns explicit host/port/password/tls options so ioredis has zero
+ * ambiguity about how to connect. Logs the resolved host for diagnostics.
+ */
+function buildRedisOptions(): RedisOptions {
+  if (REDIS_URL) {
+    let parsed: URL;
+    try {
+      parsed = new URL(REDIS_URL);
+    } catch (e) {
+      console.error('[Consumer] ❌ REDIS_URL is set but not a valid URL — falling back to localhost:', (e as Error).message);
+      return { host: REDIS_HOST, port: REDIS_PORT, lazyConnect: true };
+    }
+    const isTls = parsed.protocol === 'rediss:';
+    console.log(`[Consumer] Redis config → host=${parsed.hostname}, port=${parsed.port || '6379'}, tls=${isTls}`);
+    return {
+      host: parsed.hostname,
+      port: parseInt(parsed.port || '6379', 10),
+      username: parsed.username ? decodeURIComponent(parsed.username) : undefined,
+      password: parsed.password ? decodeURIComponent(parsed.password) : undefined,
+      tls: isTls ? { rejectUnauthorized: false } : undefined,
+      lazyConnect: true,
+    };
+  }
+  // No REDIS_URL set — local dev path
+  console.log(`[Consumer] Redis config → host=${REDIS_HOST}, port=${REDIS_PORT}, tls=false (REDIS_URL not set)`);
+  return { host: REDIS_HOST, port: REDIS_PORT, lazyConnect: true };
+}
+
+const redis = new Redis(buildRedisOptions());
 
 // PostgreSQL: use DATABASE_URL (Render) when available, otherwise individual vars (local dev)
 // ssl.rejectUnauthorized=false is required for Render's self-signed cert in the URL
@@ -150,15 +178,9 @@ async function saveFlaggedTransaction(tx: ProcessedTransaction): Promise<void> {
 
 // ─── Main ────────────────────────────────────────────────────────────────────
 async function main(): Promise<void> {
-  // Connect Redis:
-  //   URL-based (Upstash): ioredis auto-connects on construction — just ping to verify.
-  //   HOST:PORT (local dev): lazyConnect=true, so we must call connect() explicitly.
-  if (!REDIS_URL) {
-    await redis.connect();
-  }
-  await redis.ping(); // blocks until connection is ready in both cases
-  const redisInfo = REDIS_URL ? 'Upstash (TLS)' : `${REDIS_HOST}:${REDIS_PORT}`;
-  console.log(`[Consumer] ✅ Redis connected (${redisInfo})`);
+  // Connect Redis (lazyConnect=true in both paths — always needs explicit connect())
+  await redis.connect();
+  console.log(`[Consumer] ✅ Redis connected`);
 
   // Test PostgreSQL connection
   const pgClient = await pgPool.connect();
