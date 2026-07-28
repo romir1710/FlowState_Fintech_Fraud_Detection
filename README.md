@@ -1,129 +1,251 @@
-<div align="center">
+# FlowState: Real-Time Fraud Detection Pipeline
 
-<h1>⚡ FlowState</h1>
-<h3>Real-Time Transaction Fraud Detection Pipeline</h3>
+A production-deployed, full-stack real-time fraud detection system built on Apache Kafka. Transactions flow from a simulated payment producer → Kafka → a fraud-scoring consumer → WebSocket → a live browser dashboard.
 
-<p>
-  <img src="https://img.shields.io/badge/TypeScript-5.x-3178C6?style=for-the-badge&logo=typescript&logoColor=white" />
-  <img src="https://img.shields.io/badge/Apache%20Kafka-7.6-231F20?style=for-the-badge&logo=apachekafka&logoColor=white" />
-  <img src="https://img.shields.io/badge/Redis-7-DC382D?style=for-the-badge&logo=redis&logoColor=white" />
-  <img src="https://img.shields.io/badge/PostgreSQL-16-4169E1?style=for-the-badge&logo=postgresql&logoColor=white" />
-  <img src="https://img.shields.io/badge/Next.js-16-000000?style=for-the-badge&logo=nextdotjs&logoColor=white" />
-  <img src="https://img.shields.io/badge/Docker-Compose-2496ED?style=for-the-badge&logo=docker&logoColor=white" />
-</p>
-
-<p>
-  An event-driven, real-time fraud detection pipeline that ingests a high-frequency simulated payment stream via Apache Kafka, performs velocity-based risk scoring using Redis, persists flagged transactions in PostgreSQL, and broadcasts live results to a Next.js frontend over WebSockets.
-</p>
-
-</div>
-
----
-
-## Table of Contents
-
-- [Architecture](#architecture)
-- [Tech Stack](#tech-stack)
-- [Project Structure](#project-structure)
-- [Quickstart](#quickstart)
-- [Configuration](#configuration)
-- [Fraud Detection Logic](#fraud-detection-logic)
-- [Redis Velocity Design](#redis-velocity-design)
-- [API & Data Contracts](#api--data-contracts)
-- [Infrastructure Services](#infrastructure-services)
-- [License](#license)
+**[Live Demo →](https://flowstate-fintech-fraud-detection.vercel.app)**
 
 ---
 
 ## Architecture
 
 ```
-┌──────────────────────────────────────────────────────────────────┐
-│                        Docker Network                            │
-│                                                                  │
-│  ┌───────────┐    ┌───────────────────────────────────────────┐  │
-│  │ Producer  │───▶│  Kafka Topic: transaction-events (3 part) │  │
-│  │ (Node.js) │    └──────────────────────┬────────────────────┘  │
-│  └───────────┘                           │                        │
-│                                          ▼                        │
-│                              ┌───────────────────┐               │
-│                              │   Consumer         │               │
-│                              │   (Node.js)        │               │
-│                              │                    │               │
-│                              │  1. Parse message  │               │
-│                              │  2. Redis INCR     │──▶ Redis      │
-│                              │     velocity check │    (fixed     │
-│                              │  3. Score (0-100)  │     window)   │
-│                              │  4. riskScore>75?  │               │
-│                              │     → PostgreSQL   │──▶ Postgres   │
-│                              │  5. Broadcast all  │               │
-│                              └────────┬──────────┘               │
-│                                       │                           │
-│                              ┌────────▼──────────┐               │
-│                              │  WebSocket Server  │               │
-│                              │     (port 8080)    │               │
-│                              └────────┬──────────┘               │
-└───────────────────────────────────────┼──────────────────────────┘
-                                        │
-                               ┌────────▼──────────┐
-                               │   Next.js Frontend │
-                               │    (port 3000)     │
-                               │                    │
-                               │ ✅ Approved txns   │
-                               │ 🚨 Flagged txns    │
-                               └────────────────────┘
+┌─────────────────┐     Kafka      ┌──────────────────────┐     WebSocket    ┌─────────────┐
+│  Producer       │ ─────────────► │  Consumer            │ ────────────────► │  Frontend   │
+│  (Render)       │  transaction-  │  (Render)            │   enriched tx     │  (Vercel)   │
+│                 │  events topic  │                       │   (all + fraud)   │             │
+│  Generates tx   │                │  • Fraud scoring      │                   │  Live feed  │
+│  at configurable│                │  • Redis velocity     │                   │  Filter UI  │
+│  interval       │                │  • PostgreSQL persist │                   │  Spotlight  │
+└─────────────────┘                └──────────────────────┘                   └─────────────┘
+                                            │
+                                            │ SQL (fraud only)
+                                            ▼
+                                   ┌─────────────────┐     ┌──────────────────┐
+                                   │  PostgreSQL      │     │  Redis           │
+                                   │  (Render)        │     │  (Upstash)       │
+                                   │                  │     │                  │
+                                   │  flagged_txns    │     │  velocity        │
+                                   │  table           │     │  counters        │
+                                   └─────────────────┘     └──────────────────┘
 ```
+
+**Cloud services used (all free tier):**
+- **Vercel** — Frontend hosting (auto-deploys on every push to `main`)
+- **Render** — Backend hosting for Consumer + Producer services
+- **Aiven** — Managed Apache Kafka with SASL/SCRAM-256 + TLS
+- **Upstash** — Serverless Redis for velocity counters
+- **Render PostgreSQL** — Persistent storage for flagged transactions
 
 ---
 
 ## Tech Stack
 
-| Layer | Technology | Purpose |
-|---|---|---|
-| **Message Broker** | Apache Kafka 7.6 (Confluent) | High-throughput event streaming |
-| **Coordination** | Apache Zookeeper 7.6 | Kafka cluster management |
-| **Cache / Store** | Redis 7 (Alpine) | Fixed-window velocity counters |
-| **Database** | PostgreSQL 16 (Alpine) | Persistent fraud record storage |
-| **Backend** | Node.js + TypeScript 5 | Producer, Consumer, WS Server |
-| **Frontend** | Next.js 16 + React 18 | Real-time monitoring UI |
-| **Containerization** | Docker + Docker Compose | Full local environment |
+| Layer | Technology |
+|---|---|
+| Message Broker | Apache Kafka (Aiven cloud) |
+| Velocity Cache | Redis (Upstash serverless) |
+| Fraud Store | PostgreSQL (Render managed) |
+| Backend Runtime | Node.js 20 + TypeScript |
+| WebSocket | `ws` library (combined HTTP + WS server) |
+| Frontend | React 18 + Vite + TypeScript + Tailwind CSS |
+| Icons | lucide-react |
+| Deployment | Vercel (frontend) + Render (backend) |
 
 ---
 
 ## Project Structure
 
 ```
-FlowState/
-├── docker-compose.yml              # All infrastructure services
+FlowState-FinTech_Fraud_Detection_Pipeline/
+│
+├── docker-compose.yml              # Local dev infra (Kafka, Redis, Postgres)
+├── render.yaml                     # Render IaC — consumer, producer, postgres
 │
 ├── postgres/
-│   └── init.sql                    # Schema: flagged_transactions + indexes
+│   └── init.sql                    # Schema: flagged_transactions table
 │
-├── backend/
+└── backend/
 │   ├── package.json
 │   ├── tsconfig.json
-│   ├── .env.example                # All configurable environment variables
 │   └── src/
-│       ├── types.ts                # Transaction & ProcessedTransaction interfaces
-│       ├── producer.ts             # Kafka mock transaction producer
-│       ├── consumer.ts             # Fraud detection engine
-│       └── websocket-server.ts     # WebSocket broadcast server
+│       ├── types.ts                # Shared Transaction + ProcessedTransaction types
+│       ├── producer.ts             # Kafka transaction producer
+│       ├── consumer.ts             # Fraud detection engine + WebSocket broadcaster
+│       └── websocket-server.ts     # Combined HTTP (/health) + WebSocket server
 │
 └── frontend/
+    ├── index.html                  # Vite entry point
+    ├── vite.config.ts
+    ├── tailwind.config.ts
+    ├── postcss.config.js
     ├── package.json
     ├── tsconfig.json
-    ├── next.config.ts              # Standalone output + WS URL env passthrough
     ├── .env.local.example          # Frontend environment variable template
-    ├── types/
-    │   └── transaction.ts          # Frontend-side type definitions
-    └── app/
-        ├── layout.tsx
-        └── page.tsx                # WebSocket client + live transaction display
+    └── src/
+        ├── main.tsx                # React 18 createRoot entry
+        ├── index.css               # Tailwind + Google Fonts + hero animations
+        ├── App.tsx                 # Main page: WebSocket client + layout + state
+        ├── vite-env.d.ts           # import.meta.env type declarations
+        ├── types/
+        │   └── transaction.ts      # Frontend-side type definitions
+        └── components/
+            └── RevealLayer.tsx     # Cursor spotlight reveal component
 ```
 
 ---
 
-## Quickstart
+## Live Frontend Features
+
+The dashboard is built as a full-screen dark-themed interface with:
+
+- **Cursor spotlight** — A soft circular mask follows the mouse, revealing a second background image beneath the base image in real time, using a hidden canvas and CSS `maskImage`.
+- **Inter + Playfair Display** typography — Wordmark in Playfair Display italic; UI in Inter.
+- **Staggered hero animations** — Blur-rise for the heading, zoom-out for the background, fade-up for the stream area.
+- **Filter nav bar** — Pill-style navigation (All / Approved / Flagged) with glassmorphic backdrop.
+- **Smart count display** — In "All" view, shows `50+` when the list cap is reached. In the individual "Approved" or "Flagged" views, shows the exact running total regardless of cap.
+- **Total Transactions counter** — Displayed below the heading in "All" view, counts every transaction seen since page load.
+- **Glassmorphic transaction cards** — Key-value pair layout with a green or red status dot, dark blurred background for readability.
+- **Auto-reconnect** — WebSocket reconnects automatically after 3 seconds if the connection drops.
+- **Free-tier wake-up ping** — On page load, silently pings the producer's health endpoint so Render wakes it from sleep before a recruiter sees a blank dashboard.
+
+---
+
+## Fraud Detection Logic
+
+Each incoming Kafka message is processed through a two-factor risk scoring model.
+
+### Risk Score Formula
+
+```
+amountScore   = (amount / 5_000) × 65     →  0 – 65 points
+velocityScore = min(velocity, 10) × 3.5   →  0 – 35 points
+─────────────────────────────────────────────────────────────
+riskScore     = amountScore + velocityScore   (range: 0 – 100)
+isFraud       = riskScore > FRAUD_THRESHOLD   (default: 75)
+```
+
+The formula weights transaction **amount** more heavily than velocity (65 vs 35 pts). This means a single suspiciously large transaction can breach the threshold on its own merits — closer to how real-world fraud models behave — rather than requiring both signals to align simultaneously.
+
+### Score Examples
+
+| Scenario | Amount | Velocity (60s) | Score | Result |
+|---|---|---|---|---|
+| Small, rare | $100 | 1 tx | 1 + 4 = **5** | ✅ Approved |
+| Large, rare | $4,000 | 1 tx | 52 + 4 = **56** | ✅ Approved |
+| Large, normal velocity | $4,500 | 5 tx | 58 + 18 = **76** | 🚨 **FRAUD** |
+| Small, high velocity | $200 | 10 tx | 3 + 35 = **38** | ✅ Approved |
+| Maximum signal | $5,000 | 10+ tx | 65 + 35 = **100** | 🚨 **FRAUD** |
+
+Flagged transactions are:
+1. Logged to the console with `WARN` level
+2. Persisted to the PostgreSQL `flagged_transactions` table (idempotent via `ON CONFLICT DO NOTHING`)
+3. Broadcast to all connected WebSocket clients (same as approved transactions)
+
+---
+
+## Redis Velocity Design
+
+The velocity counter uses a **fixed-window** approach. This is a deliberate design choice:
+
+```typescript
+// The naive (broken) approach — resets the window on every transaction:
+await redis.incr(key);
+await redis.expire(key, 60); // ❌ TTL resets every call → infinite window
+
+// The correct approach (implemented):
+const velocity = await redis.incr(key);
+if (velocity === 1) {
+  // Key was just created — start the 60s clock once, never reset it.
+  await redis.expire(key, VELOCITY_WINDOW_SECONDS); // ✅
+}
+```
+
+**Why this matters:** If `EXPIRE` were called on every increment, a user transacting every 59 seconds would accumulate velocity indefinitely. By only setting the TTL when `velocity === 1`, the 60-second clock starts on the first transaction and expires naturally, providing a true fixed-window rate counter.
+
+---
+
+## API & Data Contracts
+
+### Kafka Message Schema (`transaction-events` topic)
+
+```json
+{
+  "transactionId": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+  "userId": "user_007",
+  "amount": 3842.50,
+  "timestamp": "2026-07-28T10:30:00.000Z",
+  "location": "Singapore, SG"
+}
+```
+
+### WebSocket Broadcast Schema
+
+Sent to all connected clients for every transaction (approved and flagged):
+
+```json
+{
+  "transactionId": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+  "userId": "user_007",
+  "amount": 3842.50,
+  "timestamp": "2026-07-28T10:30:00.000Z",
+  "location": "Singapore, SG",
+  "riskScore": 83,
+  "isFraud": true,
+  "velocity": 9
+}
+```
+
+### PostgreSQL Schema (`flagged_transactions`)
+
+```sql
+CREATE TABLE flagged_transactions (
+  id              UUID          PRIMARY KEY DEFAULT gen_random_uuid(),
+  transaction_id  VARCHAR(64)   NOT NULL UNIQUE,
+  user_id         VARCHAR(64)   NOT NULL,
+  amount          NUMERIC(12,2) NOT NULL,
+  timestamp       TIMESTAMPTZ   NOT NULL,
+  location        VARCHAR(128),
+  risk_score      SMALLINT      NOT NULL CHECK (risk_score BETWEEN 0 AND 100),
+  velocity        SMALLINT      NOT NULL CHECK (velocity >= 0),
+  created_at      TIMESTAMPTZ   NOT NULL DEFAULT NOW()
+);
+```
+
+---
+
+## Configuration
+
+### Backend (`backend/.env.example`)
+
+| Variable | Default | Description |
+|---|---|---|
+| `KAFKA_BROKERS` | `localhost:9092` | Comma-separated Kafka broker addresses (`host:port`) |
+| `KAFKA_SASL_USERNAME` | — | Aiven SASL username (production only) |
+| `KAFKA_SASL_PASSWORD` | — | Aiven SASL password (production only) |
+| `KAFKA_TOPIC` | `transaction-events` | Kafka topic name |
+| `KAFKA_GROUP_ID` | `flowstate-fraud-detector` | Consumer group ID |
+| `PRODUCE_INTERVAL_MS` | `200` | Producer frequency (600ms ≈ 1.7 tx/sec recommended in production) |
+| `FRAUD_THRESHOLD` | `75` | Risk score cutoff |
+| `VELOCITY_WINDOW_SECONDS` | `60` | Fixed-window duration for velocity counter |
+| `REDIS_URL` | — | Full Upstash `rediss://` URL (takes priority over HOST/PORT) |
+| `REDIS_HOST` | `localhost` | Redis hostname (local dev fallback) |
+| `REDIS_PORT` | `6379` | Redis port (local dev fallback) |
+| `DATABASE_URL` | — | Full Render Postgres connection string (takes priority over PG_*) |
+| `PG_HOST` | `localhost` | PostgreSQL hostname (local dev fallback) |
+| `PG_PORT` | `5432` | PostgreSQL port |
+| `PG_DATABASE` | `flowstate` | Database name |
+| `PG_USER` | `flowstate_user` | Database user |
+| `PG_PASSWORD` | `flowstate_pass` | Database password |
+
+### Frontend (`frontend/.env.local.example`)
+
+| Variable | Default (fallback in code) | Description |
+|---|---|---|
+| `VITE_WS_URL` | `ws://localhost:8080` | WebSocket server URL — set to `wss://flowstate-consumer.onrender.com` in production |
+
+---
+
+## Local Development
 
 ### Prerequisites
 
@@ -160,7 +282,7 @@ npm install
 # Terminal A — Consumer (fraud detector + WebSocket server on :8080)
 npm run start:consumer
 
-# Terminal B — Producer (5 transactions/sec by default)
+# Terminal B — Producer (5 transactions/sec by default locally)
 npm run start:producer
 ```
 
@@ -176,150 +298,18 @@ cp .env.local.example .env.local
 npm run dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000). Transactions will appear in real-time split into **Approved** and **Flagged (FRAUD)** lists.
+Open [http://localhost:5173](http://localhost:5173). Transactions will appear in real-time split into **Approved** and **Flagged (FRAUD)** lists.
 
 ---
 
-## Configuration
+## Infrastructure Services (Local Docker)
 
-All values are configurable via environment variables. Sensible defaults work out of the box with `docker-compose`.
-
-### Backend (`backend/.env.example`)
-
-| Variable | Default | Description |
-|---|---|---|
-| `KAFKA_BROKERS` | `localhost:9092` | Comma-separated Kafka broker addresses |
-| `KAFKA_TOPIC` | `transaction-events` | Kafka topic name |
-| `KAFKA_GROUP_ID` | `flowstate-fraud-detector` | Consumer group ID |
-| `PRODUCE_INTERVAL_MS` | `200` | Producer frequency (200ms = 5 tx/sec) |
-| `FRAUD_THRESHOLD` | `75` | Risk score cutoff — scores above this are flagged |
-| `VELOCITY_WINDOW_SECONDS` | `60` | Fixed-window duration for velocity counter |
-| `WS_PORT` | `8080` | WebSocket server port |
-| `REDIS_HOST` | `localhost` | Redis hostname |
-| `REDIS_PORT` | `6379` | Redis port |
-| `PG_HOST` | `localhost` | PostgreSQL hostname |
-| `PG_PORT` | `5432` | PostgreSQL port |
-| `PG_DATABASE` | `flowstate` | Database name |
-| `PG_USER` | `flowstate_user` | Database user |
-| `PG_PASSWORD` | `flowstate_pass` | Database password |
-
-### Frontend (`frontend/.env.local.example`)
-
-| Variable | Default (fallback in code) | Description |
-|---|---|---|
-| `NEXT_PUBLIC_WS_URL` | `ws://localhost:8080` | WebSocket server URL — override for Docker/production |
-
----
-
-## Fraud Detection Logic
-
-Each incoming Kafka message is processed through a two-factor risk scoring model.
-
-### Risk Score Formula
-
-```
-amountScore   = (amount / 5_000) × 50     →  0 – 50 points
-velocityScore = min(velocity, 10) × 5     →  0 – 50 points
-─────────────────────────────────────────────────────────────
-riskScore     = amountScore + velocityScore   (range: 0 – 100)
-isFraud       = riskScore > FRAUD_THRESHOLD   (default: 75)
-```
-
-### Score Examples
-
-| Scenario | Amount | Velocity (60s) | Score | Result |
-|---|---|---|---|---|
-| Small, rare | $100 | 1 tx | 1 + 5 = **6** | ✅ Approved |
-| Large, rare | $4,000 | 1 tx | 40 + 5 = **45** | ✅ Approved |
-| Small, rapid-fire | $200 | 12 tx | 2 + 50 = **52** | ✅ Approved |
-| Large, frequent | $4,000 | 8 tx | 40 + 40 = **80** | 🚨 **FRAUD** |
-| Maximum signal | $5,000 | 10+ tx | 50 + 50 = **100** | 🚨 **FRAUD** |
-
-Flagged transactions are:
-1. Logged to the console with `WARN` level
-2. Persisted to the PostgreSQL `flagged_transactions` table (idempotent via `ON CONFLICT DO NOTHING`)
-3. Broadcast to all connected WebSocket clients (same as approved transactions)
-
----
-
-## Redis Velocity Design
-
-The velocity counter uses a **fixed-window** approach. This is a deliberate design choice:
-
-```typescript
-// The naive (broken) approach — resets the window on every transaction:
-await redis.incr(key);
-await redis.expire(key, 60); // ❌ TTL resets every call → infinite window
-
-// The correct approach (implemented):
-const velocity = await redis.incr(key);
-if (velocity === 1) {
-  // Key was just created — start the 60s clock once, never reset it.
-  await redis.expire(key, VELOCITY_WINDOW_SECONDS); // ✅
-}
-```
-
-**Why this matters:** If `EXPIRE` were called on every increment, a user transacting every 59 seconds would accumulate velocity indefinitely — the window never closes. By only setting the TTL when `velocity === 1` (key creation), the 60-second clock starts on the first transaction and expires naturally, providing a true fixed-window rate counter.
-
----
-
-## API & Data Contracts
-
-### Kafka Message Schema (`transaction-events` topic)
-
-```json
-{
-  "transactionId": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
-  "userId": "user_007",
-  "amount": 3842.50,
-  "timestamp": "2026-07-26T10:30:00.000Z",
-  "location": "Singapore, SG"
-}
-```
-
-### WebSocket Broadcast Schema
-
-Sent to all connected clients for every transaction (approved and flagged):
-
-```json
-{
-  "transactionId": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
-  "userId": "user_007",
-  "amount": 3842.50,
-  "timestamp": "2026-07-26T10:30:00.000Z",
-  "location": "Singapore, SG",
-  "riskScore": 83,
-  "isFraud": true,
-  "velocity": 9
-}
-```
-
-### PostgreSQL Schema (`flagged_transactions`)
-
-```sql
-CREATE TABLE flagged_transactions (
-  id              UUID          PRIMARY KEY DEFAULT gen_random_uuid(),
-  transaction_id  VARCHAR(64)   NOT NULL UNIQUE,
-  user_id         VARCHAR(64)   NOT NULL,
-  amount          NUMERIC(12,2) NOT NULL,
-  timestamp       TIMESTAMPTZ   NOT NULL,
-  location        VARCHAR(128),
-  risk_score      SMALLINT      NOT NULL CHECK (risk_score BETWEEN 0 AND 100),
-  velocity        SMALLINT      NOT NULL CHECK (velocity >= 0),
-  created_at      TIMESTAMPTZ   NOT NULL DEFAULT NOW()
-);
-```
-
----
-
-## Infrastructure Services
-
-| Service | Image | Host Port | Purpose |
+| Service | Image | Port | Purpose |
 |---|---|---|---|
 | `zookeeper` | `confluentinc/cp-zookeeper:7.6.0` | 2181 | Kafka coordination |
 | `kafka` | `confluentinc/cp-kafka:7.6.0` | 9092 | Message broker |
 | `kafka-init` | `confluentinc/cp-kafka:7.6.0` | — | One-shot topic creator |
-| `redis` | `redis:7-alpine` | 6379 | Velocity cache (LRU, 256MB) |
+| `redis` | `redis:7-alpine` | 6379 | Velocity cache (256MB) |
 | `postgres` | `postgres:16-alpine` | 5432 | Flagged transaction store |
 
 ### Teardown
@@ -334,26 +324,27 @@ docker-compose down -v
 
 ---
 
+## Production Deployment (Render + Vercel)
+
+The repo ships with `render.yaml` which auto-provisions both backend services and the PostgreSQL database. On every push to `main`, Render and Vercel auto-deploy.
+
+**Environment variables to set manually in Render (not stored in repo):**
+
+| Service | Variable | Source |
+|---|---|---|
+| consumer + producer | `KAFKA_BROKERS` | Aiven → Service → Overview → Connection info |
+| consumer + producer | `KAFKA_SASL_USERNAME` | Aiven credentials |
+| consumer + producer | `KAFKA_SASL_PASSWORD` | Aiven credentials |
+| consumer | `REDIS_URL` | Upstash → Database → REST URL (use `rediss://` connection string) |
+
+**Environment variable to set in Vercel:**
+
+| Variable | Value |
+|---|---|
+| `VITE_WS_URL` | `wss://flowstate-consumer.onrender.com` |
+
+---
+
 ## License
 
-MIT License
-
-Copyright (c) 2026 Romir
-
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the "Software"), to deal
-in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions:
-
-The above copyright notice and this permission notice shall be included in all
-copies or substantial portions of the Software.
-
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-SOFTWARE.
+MIT License — Copyright (c) 2026 Romir
