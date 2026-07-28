@@ -127,7 +127,7 @@ FlowState-FinTech_Fraud_Detection_Pipeline/
 
 ## Quickstart
 
-> **Live Application**: The direct live public URL is **[[https://flowstate-fintech-fraud-detection.vercel.app](https://flowstate-fintech-fraud-detection.vercel.app](https://flow-state-fintech-fraud-detection.vercel.app/))**, so the web app can be accessed through here directly. However, assuming you would like to run it locally, follow the steps below.
+> **Live Application**: The direct live public URL is **[https://flow-state-fintech-fraud-detection.vercel.app/](https://flow-state-fintech-fraud-detection.vercel.app/)**, so the web app can be accessed through here directly. However, assuming you would like to run it locally, follow the steps below.
 
 ### Prerequisites
 
