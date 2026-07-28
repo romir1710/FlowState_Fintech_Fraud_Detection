@@ -138,18 +138,24 @@ async function getAndIncrementVelocity(userId: string): Promise<number> {
  * Calculates a composite risk score in the range [0, 100].
  *
  * Formula:
- *   amountScore   = (amount / 5000) * 50      → 0–50 pts, proportional to max amount
- *   velocityScore = min(velocity, 10) * 5     → 0–50 pts, 5 pts per tx (capped at 10)
+ *   amountScore   = (amount / 5000) * 65      → 0–65 pts, proportional to max amount
+ *   velocityScore = min(velocity, 10) * 3.5   → 0–35 pts, 3.5 pts per tx (capped at 10)
  *   riskScore     = amountScore + velocityScore
  *
- * Examples:
- *   $5000 tx, 10+ tx in window → 50 + 50 = 100 (max fraud signal)
- *   $100  tx, 1 tx in window   →  1 +  5 =   6 (safe)
- *   $4500 tx, 8 tx in window   → 45 + 40 =  85 (FRAUD — exceeds threshold 75)
+ * Design rationale (portfolio 600ms stream, 20-user pool):
+ *   At 600ms intervals a user averages ~5 tx per 60s → velocityScore ≈ 17–18 pts.
+ *   Old weights required BOTH high velocity AND high amount to exceed 75,
+ *   making fraud near-impossible at normal speed. New weights allow a very large
+ *   transaction ($4 500+) at normal velocity to breach the threshold on its own:
+ *
+ *   $4500 tx, velocity 5  → 58 + 18 = 76  (FRAUD ✅)
+ *   $4000 tx, velocity 5  → 52 + 18 = 70  (approved — realistic borderline)
+ *   $5000 tx, velocity 10 → 65 + 35 = 100 (max fraud signal)
+ *   $100  tx, velocity 1  →  1 +  4 =   5  (clearly safe)
  */
 function calculateRiskScore(amount: number, velocity: number): number {
-  const amountScore = Math.min((amount / 5000) * 50, 50);
-  const velocityScore = Math.min(velocity, 10) * 5;
+  const amountScore = Math.min((amount / 5000) * 65, 65);
+  const velocityScore = Math.min(velocity, 10) * 3.5;
   return Math.round(amountScore + velocityScore);
 }
 
