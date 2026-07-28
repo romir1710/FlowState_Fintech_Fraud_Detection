@@ -1,8 +1,39 @@
-# FlowState: Real-Time Fraud Detection Pipeline
+<div align="center">
 
-A production-deployed, full-stack real-time fraud detection system built on Apache Kafka. Transactions flow from a simulated payment producer → Kafka → a fraud-scoring consumer → WebSocket → a live browser dashboard.
+<h1>🌐 FlowState</h1>
+<h3>Real-Time Fraud Detection Pipeline</h3>
 
-**[Live Demo →](https://flowstate-fintech-fraud-detection.vercel.app)**
+<p>
+  <img src="https://img.shields.io/badge/Node.js-339933?style=for-the-badge&logo=nodedotjs&logoColor=white" />
+  <img src="https://img.shields.io/badge/TypeScript-3178C6?style=for-the-badge&logo=typescript&logoColor=white" />
+  <img src="https://img.shields.io/badge/Apache%20Kafka-231F20?style=for-the-badge&logo=apachekafka&logoColor=white" />
+  <img src="https://img.shields.io/badge/React-20232A?style=for-the-badge&logo=react&logoColor=61DAFB" />
+  <img src="https://img.shields.io/badge/PostgreSQL-316192?style=for-the-badge&logo=postgresql&logoColor=white" />
+  <img src="https://img.shields.io/badge/Redis-DC382D?style=for-the-badge&logo=redis&logoColor=white" />
+</p>
+
+<p>
+  A production-deployed, full-stack real-time fraud detection system built on Apache Kafka. Transactions flow from a simulated payment producer → Kafka → a fraud-scoring consumer → WebSocket → a live browser dashboard.
+</p>
+
+</div>
+
+---
+
+## Table of Contents
+
+- [Architecture](#architecture)
+- [Tech Stack](#tech-stack)
+- [Project Structure](#project-structure)
+- [Quickstart](#quickstart)
+- [Live Frontend Features](#live-frontend-features)
+- [Fraud Detection Logic](#fraud-detection-logic)
+- [Redis Velocity Design](#redis-velocity-design)
+- [API & Data Contracts](#api--data-contracts)
+- [Configuration](#configuration)
+- [Infrastructure Services (Local Docker)](#infrastructure-services-local-docker)
+- [Production Deployment (Render + Vercel)](#production-deployment-render--vercel)
+- [License](#license)
 
 ---
 
@@ -42,14 +73,14 @@ A production-deployed, full-stack real-time fraud detection system built on Apac
 
 | Layer | Technology |
 |---|---|
-| Message Broker | Apache Kafka (Aiven cloud) |
-| Velocity Cache | Redis (Upstash serverless) |
-| Fraud Store | PostgreSQL (Render managed) |
-| Backend Runtime | Node.js 20 + TypeScript |
-| WebSocket | `ws` library (combined HTTP + WS server) |
-| Frontend | React 18 + Vite + TypeScript + Tailwind CSS |
-| Icons | lucide-react |
-| Deployment | Vercel (frontend) + Render (backend) |
+| **Message Broker** | Apache Kafka (Aiven cloud) |
+| **Velocity Cache** | Redis (Upstash serverless) |
+| **Fraud Store** | PostgreSQL (Render managed) |
+| **Backend Runtime** | Node.js 20 + TypeScript |
+| **WebSocket** | `ws` library (combined HTTP + WS server) |
+| **Frontend** | React 18 + Vite + TypeScript + Tailwind CSS |
+| **Icons** | lucide-react |
+| **Deployment** | Vercel (frontend) + Render (backend) |
 
 ---
 
@@ -91,6 +122,65 @@ FlowState-FinTech_Fraud_Detection_Pipeline/
         └── components/
             └── RevealLayer.tsx     # Cursor spotlight reveal component
 ```
+
+---
+
+## Quickstart
+
+> **Live Application**: The direct live public URL is **[https://flowstate-fintech-fraud-detection.vercel.app](https://flowstate-fintech-fraud-detection.vercel.app)**, so the web app can be accessed through here directly. However, assuming you would like to run it locally, follow the steps below.
+
+### Prerequisites
+
+- [Docker Desktop](https://www.docker.com/products/docker-desktop/) (includes Docker Compose)
+- [Node.js 20+](https://nodejs.org/) and npm
+
+### 1. Clone the repository
+
+```bash
+git clone https://github.com/romir1710/FlowState_Fintech_Fraud_Detection.git
+cd FlowState_Fintech_Fraud_Detection
+```
+
+### 2. Start the infrastructure
+
+```bash
+docker-compose up -d
+```
+
+Wait approximately **30–45 seconds** for Kafka to initialize. Verify the topic was created:
+
+```bash
+docker exec flowstate-kafka \
+  kafka-topics --bootstrap-server localhost:9092 --list
+# Expected output: transaction-events
+```
+
+### 3. Start the backend
+
+```bash
+cd backend
+npm install
+
+# Terminal A — Consumer (fraud detector + WebSocket server on :8080)
+npm run start:consumer
+
+# Terminal B — Producer (5 transactions/sec by default locally)
+npm run start:producer
+```
+
+### 4. Start the frontend
+
+```bash
+cd frontend
+npm install
+
+# Optional: configure WebSocket URL
+cp .env.local.example .env.local
+
+npm run dev
+```
+
+Open [http://localhost:5173](http://localhost:5173). Transactions will appear in real-time split into **Approved** and **Flagged (FRAUD)** lists.
 
 ---
 
@@ -245,63 +335,6 @@ CREATE TABLE flagged_transactions (
 
 ---
 
-## Local Development
-
-### Prerequisites
-
-- [Docker Desktop](https://www.docker.com/products/docker-desktop/) (includes Docker Compose)
-- [Node.js 20+](https://nodejs.org/) and npm
-
-### 1. Clone the repository
-
-```bash
-git clone https://github.com/romir1710/FlowState_Fintech_Fraud_Detection.git
-cd FlowState_Fintech_Fraud_Detection
-```
-
-### 2. Start the infrastructure
-
-```bash
-docker-compose up -d
-```
-
-Wait approximately **30–45 seconds** for Kafka to initialize. Verify the topic was created:
-
-```bash
-docker exec flowstate-kafka \
-  kafka-topics --bootstrap-server localhost:9092 --list
-# Expected output: transaction-events
-```
-
-### 3. Start the backend
-
-```bash
-cd backend
-npm install
-
-# Terminal A — Consumer (fraud detector + WebSocket server on :8080)
-npm run start:consumer
-
-# Terminal B — Producer (5 transactions/sec by default locally)
-npm run start:producer
-```
-
-### 4. Start the frontend
-
-```bash
-cd frontend
-npm install
-
-# Optional: configure WebSocket URL
-cp .env.local.example .env.local
-
-npm run dev
-```
-
-Open [http://localhost:5173](http://localhost:5173). Transactions will appear in real-time split into **Approved** and **Flagged (FRAUD)** lists.
-
----
-
 ## Infrastructure Services (Local Docker)
 
 | Service | Image | Port | Purpose |
@@ -347,4 +380,24 @@ The repo ships with `render.yaml` which auto-provisions both backend services an
 
 ## License
 
-MIT License — Copyright (c) 2026 Romir
+MIT License
+
+Copyright (c) 2026 Romir
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
