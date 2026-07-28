@@ -48,7 +48,7 @@ function TransactionCard({ tx }: { tx: ProcessedTransaction }) {
   ];
 
   return (
-    <div className="bg-white/5 backdrop-blur-md border border-white/10 rounded-xl p-5 flex flex-col gap-3 transition-all hover:bg-white/10 pointer-events-auto">
+    <div className="bg-black/40 backdrop-blur-lg border border-white/10 rounded-xl p-5 flex flex-col gap-3 transition-all hover:bg-black/50 pointer-events-auto">
       {/* Status indicator */}
       <div className="flex items-center gap-2">
         <span
@@ -80,18 +80,20 @@ function StreamColumn({
   icon,
   transactions,
   accentColor,
+  displayCount,
 }: {
   title: string;
   icon: React.ReactNode;
   transactions: ProcessedTransaction[];
   accentColor: string;
+  displayCount: string;
 }) {
   return (
     <div className="flex flex-col gap-4 h-full">
       <div className="flex items-center gap-2 pointer-events-none">
         {icon}
         <h2 className={`text-lg font-semibold ${accentColor}`}>{title}</h2>
-        <span className="text-white/40 text-sm ml-auto">{transactions.length}</span>
+        <span className="text-white/40 text-sm ml-auto">{displayCount}</span>
       </div>
       <div className="overflow-y-auto pr-2 scrollbar-hide flex flex-col gap-3 flex-1">
         {transactions.length === 0 ? (
@@ -112,6 +114,8 @@ export default function App() {
   const [flagged, setFlagged] = useState<ProcessedTransaction[]>([]);
   const [_status, setStatus] = useState<ConnectionStatus>('connecting');
   const [_messageCount, setMessageCount] = useState(0);
+  const [totalApproved, setTotalApproved] = useState(0);
+  const [totalFlagged, setTotalFlagged] = useState(0);
   const [filter, setFilter] = useState<FilterMode>('All');
 
   // ── WebSocket refs ────────────────────────────────────────────────────────
@@ -154,8 +158,10 @@ export default function App() {
       setMessageCount((prev) => prev + 1);
 
       if (tx.isFraud) {
+        setTotalFlagged((prev) => prev + 1);
         setFlagged((prev) => [tx, ...prev].slice(0, MAX_LIST_SIZE));
       } else {
+        setTotalApproved((prev) => prev + 1);
         setApproved((prev) => [tx, ...prev].slice(0, MAX_LIST_SIZE));
       }
     };
@@ -276,6 +282,14 @@ export default function App() {
               Fraud Detection
             </span>
           </h1>
+
+          {/* Total counter — only in All view */}
+          {filter === 'All' && (totalApproved + totalFlagged) > 0 && (
+            <p className="mt-4 text-white/40 text-sm font-medium tracking-wide">
+              Total Transactions:{' '}
+              <span className="text-white/70">{totalApproved + totalFlagged}</span>
+            </p>
+          )}
         </div>
 
         {/* ── Transaction streams (z-50) ── */}
@@ -291,6 +305,7 @@ export default function App() {
                   icon={<ShieldCheck size={18} className="text-emerald-400" />}
                   transactions={approved}
                   accentColor="text-emerald-400"
+                  displayCount={totalApproved > MAX_LIST_SIZE ? `${MAX_LIST_SIZE}+` : String(totalApproved)}
                 />
               </div>
               <div className="w-1/2 flex flex-col gap-4">
@@ -299,6 +314,7 @@ export default function App() {
                   icon={<ShieldAlert size={18} className="text-red-400" />}
                   transactions={flagged}
                   accentColor="text-red-400"
+                  displayCount={totalFlagged > MAX_LIST_SIZE ? `${MAX_LIST_SIZE}+` : String(totalFlagged)}
                 />
               </div>
             </>
@@ -311,6 +327,7 @@ export default function App() {
                 icon={<ShieldCheck size={18} className="text-emerald-400" />}
                 transactions={approved}
                 accentColor="text-emerald-400"
+                displayCount={String(totalApproved)}
               />
             </div>
           )}
@@ -322,6 +339,7 @@ export default function App() {
                 icon={<ShieldAlert size={18} className="text-red-400" />}
                 transactions={flagged}
                 accentColor="text-red-400"
+                displayCount={String(totalFlagged)}
               />
             </div>
           )}
