@@ -17,7 +17,7 @@ export interface Transaction {
  * All fields from Transaction plus fraud analysis results.
  */
 export interface ProcessedTransaction extends Transaction {
-  /** Composite risk score 0–100. Formula: amountScore(0-50) + velocityScore(0-50) */
+  /** Composite risk score 0–100. Formula: amountScore(0-65) + velocityScore(0-35) */
   riskScore: number;
   /** true if riskScore > FRAUD_THRESHOLD (default 75) */
   isFraud: boolean;
