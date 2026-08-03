@@ -1,0 +1,32 @@
+name: Aiven Kafka Keepalive
+
+on:
+  schedule:
+    # Runs at 00:00 UTC every 3 days — well within Aiven's inactivity window
+    - cron: '0 0 */3 * *'
+  # Allow manual triggering from the GitHub Actions tab
+  workflow_dispatch:
+
+jobs:
+  kafka-ping:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install kafkajs
+        run: npm install kafkajs
+
+      - name: Send Kafka keepalive ping
+        env:
+          KAFKA_BROKERS: ${{ secrets.KAFKA_BROKERS }}
+          KAFKA_SASL_USERNAME: ${{ secrets.KAFKA_SASL_USERNAME }}
+          KAFKA_SASL_PASSWORD: ${{ secrets.KAFKA_SASL_PASSWORD }}
+          KAFKA_TOPIC: transaction-events
+        run: node .github/scripts/kafka-ping.js
